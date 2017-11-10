@@ -1,0 +1,6 @@
+.cbcli/options.json
+*.pyc
+*.swp
+.history
+*.txt
+*.tsv

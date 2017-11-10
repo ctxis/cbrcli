@@ -1,0 +1,1 @@
+{"process": {"has_netconns": "(netconn_count: [1 TO *])", "archive_tools": "(process_name:zip.exe OR process_name:7z*.exe OR process_name:*rar.exe)", "email_links": "((process_name:chrome.exe OR process_name:firefox.exe OR process_name:iexplore.exe) AND parent_name:outlook.exe)"}, "binary": {"unsigned": "digsig_result:unsigned"}}
