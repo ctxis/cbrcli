@@ -16,7 +16,7 @@ Cygwin is the recommended method of running cbrcli on windows as it will have al
 * Install Cygwin from https://cygwin.com/install.html
 * When installing Cygwin, ensure that the python 2.7 and python pip packages are selected for installation
 * Once installed, start cygwin and run `pip install cbapi`
-* Download and extract cbrcli from the github page (https://github.com/contextis/cbrcli)
+* Download and extract cbrcli from the github page (https://github.com/ctxis/cbrcli)
 * Navigate to the downloaded directory in cygwin, likely somewhere in /cygdrive/c/Users/yourusername/
 * Follow the instructions here https://cbapi.readthedocs.io/en/latest/#api-credentials to set up your credentials
 * Start cbrcli with `python cbrcli.py`
@@ -26,7 +26,7 @@ This method will work and is slightly simpler than the cygwin method, however th
 
 * Install Python 2.7 for windows (https://www.python.org/downloads/windows/) Note: Python 3.x will not work, you MUST use Python 2.7.
 * Open a command prompt and run `C:\python27\scripts\pip.exe install cbapi`
-* Download and extract cbrcli from the github page (https://github.com/contextis/cbrcli)
+* Download and extract cbrcli from the github page (https://github.com/ctxis/cbrcli)
 * Navigate to the downloaded directory in the command prompt
 * Open the file in `.carbonblack\credentials.response.example` in a text editor (not notepad), fill in the the required information and save as `credentials.response`
 * Start cbrcli with `python cbrcli.py`
