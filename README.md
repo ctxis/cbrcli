@@ -14,8 +14,8 @@ Method 1: Cygwin (Recommended)
 Cygwin is the recommended method of running cbrcli on windows as it will have all the features of the Linux version.
 
 * Install Cygwin from https://cygwin.com/install.html
-* When installing Cygwin, ensure that the python 2.7 and python pip packages are selected for installation
-* Once installed, start cygwin and run `pip install cbapi` or for pip2 (Python 2.*) use `pip2 install cbapi`
+* When installing Cygwin, ensure that the python and python pip packages are selected for installation
+* Once installed, start cygwin and run `pip install cbapi`
 * Download and extract cbrcli from the github page (https://github.com/ctxis/cbrcli)
 * Navigate to the downloaded directory in cygwin, likely somewhere in /cygdrive/c/Users/yourusername/
 * Follow the instructions here https://cbapi.readthedocs.io/en/latest/#api-credentials to set up your credentials
@@ -24,7 +24,7 @@ Cygwin is the recommended method of running cbrcli on windows as it will have al
 Method 2: Windows cmd
 This method will work and is slightly simpler than the cygwin method, however the experience will not be as smooth and you won't get advantages like coloured output.
 
-* Install Python 2.7 for windows (https://www.python.org/downloads/windows/) Note: Python 3.x will not work, you MUST use Python 2.7.
+* Install Python for windows (https://www.python.org/downloads/windows/)
 * Open a command prompt and run `C:\python27\scripts\pip.exe install cbapi`
 * Download and extract cbrcli from the github page (https://github.com/ctxis/cbrcli)
 * Navigate to the downloaded directory in the command prompt
@@ -32,7 +32,7 @@ This method will work and is slightly simpler than the cygwin method, however th
 * Start cbrcli with `python cbrcli.py`
 
 ### Linux
-Installation on Linux should be much simpler than Windows, just make sure you're running version 2,7 of Python and pip instead of Python 3.
+Installation on Linux should be much simpler than Windows.
 
 * Run pip install cbapi
 * Download and extract cbrcli from Github
