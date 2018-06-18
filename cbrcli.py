@@ -313,7 +313,8 @@ color_schemes = {
 state['color_scheme'] = 'default' if state['options']['colorise_output'] else 'no_colors'
 
 def color(s, c):
-    return s if is_windows else '%s%s%s' % (color_schemes[state['color_scheme']].get(c, ''), s, color_schemes[state['color_scheme']]['endc'])
+    c = c or 'endc'
+    return s if is_windows else '%s%s%s' % (color_schemes[state['color_scheme']][c], s, color_schemes[state['color_scheme']]['endc'])
 
 commands = {
     'version': "version\tPrint cbcli version",
@@ -466,7 +467,7 @@ class QuerySuggester(AutoSuggest):
             for command in sorted(commands):
                 if command.startswith(cmd):
                     return Suggestion(command[len(cmd):])
-        if cmd in ('s', 'f', 'search', 'filter', 'bfilter') and ':' in params[-1]:
+        if cmd in ('s', 'f', 'search', 'filter') and ':' in params[-1]:
             split = params[-1].split(':')
             qry_field, qry_val = split[0], ':'.join(split[1:])
             if qry_field == 'start' and qry_val.startswith('['):
@@ -521,13 +522,12 @@ def do_search(qry):
     if state['selected_mode']['name'] == 'process' and hasattr(qry_result, 'min_last_update'):
         qry_result.min_last_update(timeframe)
 
-    if state['selected_mode'].get('group_field') and state['selected_mode'] in ('process', 'binary'):
+    if state['selected_mode'].get('group_field'):
         try:
             qry_result.group_by(state['selected_mode'].get('group_field'))
         except AttributeError:
             print("Warning: Unable to group by field %s" % state['selected_mode'].get('group_field'))
-    if state['selected_mode'] in ('process', 'binary'):
-        qry_result.sort(state['selected_mode']['sort_field'])
+    qry_result.sort(state['selected_mode']['sort_field'])
     return qry, qry_result
 
 def get_fields(result, state, expand_tabs=False):
@@ -670,7 +670,7 @@ def result_pager(result, state):
                 yield index, total_searched
         if lines:
             print_rows(index - len(lines) + 1, num_indent, lines)
-        yield index, num_results
+        yield index, len(result)
     except KeyboardInterrupt:
         pass
 
@@ -709,7 +709,7 @@ def format_regmod(regmod, do_color=False):
 def format_filemod(filemod, do_color=False):
     line_color = ''
     if do_color and state['options']['colorise_output']['value']:
-        line_color = {'Deleted':'red', 'FirstWrote':'endc', 'CreatedFile':'green'}.get(filemod.type, '')
+        line_color = {'Deleted':'red', 'FirstWrote':'endc', 'CreatedFile':'green', 'LastWrote':'endc'}.get(filemod.type, '')
     return color("%s %-11s %s", line_color) % (filemod.timestamp, filemod.type, filemod.path)
 
 def format_modload(modload, do_color=False):
@@ -991,7 +991,7 @@ class cbcli_cmd:
                 state['qry_list'] = [qry]
                 qry, state['result'] = do_search(qry)
                 result_count = len(state['result'])
-                status.update_query(0,0, total_results=result_count, qry=qry)
+                state['status_text'] = 'Query: [%s] (%d results)' % (qry, result_count)
                 return
         return "Invalid feed"
     @staticmethod
