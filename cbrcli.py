@@ -1,7 +1,7 @@
 #!/usr/bin/python
 from __future__ import (division, print_function, absolute_import, unicode_literals)
 
-VERSION = 'cbrcli version 1.6.4 (Selenium Green)'
+VERSION = 'cbrcli version 1.7.0 (Plutonium Eggplant)'
 print(VERSION)
 from six.moves import range
 import os
@@ -17,16 +17,22 @@ from datetime import datetime, timedelta
 from cbapi.response import CbResponseAPI, Process, Binary, Feed, Sensor
 from cbapi.auth import Credentials, CredentialStore
 from cbapi.errors import ServerError, CredentialError, ApiError
-from prompt_toolkit import prompt
-from prompt_toolkit.shortcuts import clear
-from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
-from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.styles import style_from_dict
-from prompt_toolkit.token import Token
-from prompt_toolkit.history import InMemoryHistory, FileHistory
-from prompt_toolkit.contrib.completers import WordCompleter, PathCompleter
 from threading import Thread
 from collections import deque
+
+try:
+    from prompt_toolkit import prompt
+    from prompt_toolkit.shortcuts import clear
+    from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.styles import Style
+    from prompt_toolkit.formatted_text import HTML, ANSI
+    from prompt_toolkit.history import InMemoryHistory, FileHistory
+    from prompt_toolkit.completion import WordCompleter, PathCompleter
+    from prompt_toolkit import PromptSession
+except ImportError:
+    print("Please upgrade your version of prompt_toolkit (pip install --upgrade prompt-toolkit)")
+    sys.exit(1)
 
 PYTHON_VERSION = sys.version_info[0]
 
@@ -255,11 +261,7 @@ status = status_text()
 state['result'] = None
 is_windows = 'windows' in platform.system().lower()
 state['selected_mode'] = modes['process']
-prompt_style = style_from_dict({
-    Token.Toolbar: '#FFFFFF bg:#333333',
-})
 
-history = FileHistory('.history')
 state['qry_list'] = []
 state['canary'] = {'stop':False}
 result_ids = []
@@ -460,7 +462,7 @@ class QueryCompleter(Completer):
                         yield Completion(field, start_position=-len(params[0]))
             
 class QuerySuggester(AutoSuggest):
-    def get_suggestion(self, cli, buffer, document):
+    def get_suggestion(self, buffer, document):
         split = document.current_line.split(' ')
         cmd, params = (split[0], split[1:])
         if not params:
@@ -489,8 +491,8 @@ def is_numeric(s):
         return False
     return True
 
-def get_bottom_toolbar_tokens(cli):
-    return [(Token.Toolbar, state['status_text'])]
+def get_toolbar():
+    return state['status_text']
 
 def parse_user_timeframe(timeframe):
     fields = timeframe.lower().split(' ')
@@ -1183,17 +1185,28 @@ state['feeds'] = [f for f in cb.select(Feed) if f.enabled]
 
 clear()
 
+history = FileHistory('.history')
+session = PromptSession(
+        history=history,
+        auto_suggest=QuerySuggester()
+        )
+
+toolbar_style = Style.from_dict({
+    'bottom-toolbar':      '#333333 bg:#ffffff',
+    'bottom-toolbar.text': '#333333 bg:#ffffff',
+})
+
 while state['running']:
     completer = QueryCompleter()
     suggester = QuerySuggester()
     try:
-        from_user = prompt(u'(%s)> ' % state['selected_mode']['name'] if state['selected_mode'] else '-', 
+        from_user = session.prompt(u'(%s)> ' % state['selected_mode']['name'] if state['selected_mode'] else '-', 
                 completer=completer,
                 auto_suggest=suggester,
-                get_bottom_toolbar_tokens=get_bottom_toolbar_tokens,
-                history=history,
+                bottom_toolbar=get_toolbar,
+                style=toolbar_style,
                 refresh_interval=0.5,
-                style=prompt_style).strip()
+                ).strip()
     except EOFError:
         state['canary']['stop'] = True
         print("Got ctrl+d, exiting...")
