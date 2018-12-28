@@ -1,7 +1,7 @@
 #!/usr/bin/python
 from __future__ import (division, print_function, absolute_import, unicode_literals)
 
-VERSION = 'cbrcli version 1.7.0 (Plutonium Eggplant)'
+VERSION = 'cbrcli version 1.7.4 (Plutonium Eggplant)'
 print(VERSION)
 from six.moves import range
 import os
@@ -19,9 +19,8 @@ from cbapi.auth import Credentials, CredentialStore
 from cbapi.errors import ServerError, CredentialError, ApiError
 from threading import Thread
 from collections import deque
-
+from prompt_toolkit import prompt
 try:
-    from prompt_toolkit import prompt
     from prompt_toolkit.shortcuts import clear
     from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
     from prompt_toolkit.completion import Completer, Completion
@@ -66,7 +65,7 @@ modes = {
             'server_added_timestamp',
             'facet_id',
             'md5',
-            'endpoint',
+            'hostname',
             'watchlists',
             'signed',
             'original_filename',
@@ -74,6 +73,7 @@ modes = {
             'os_type',
             'file_desc',
             'last_seen',
+            'webui_link',
         ]
     },
     'process': {
@@ -123,6 +123,7 @@ modes = {
             'ipaddr',
             'regmod',
             'filemod',
+            'webui_link',
         ]
     },
     'sensor': {
@@ -315,8 +316,7 @@ color_schemes = {
 state['color_scheme'] = 'default' if state['options']['colorise_output'] else 'no_colors'
 
 def color(s, c):
-    c = c or 'endc'
-    return s if is_windows else '%s%s%s' % (color_schemes[state['color_scheme']][c], s, color_schemes[state['color_scheme']]['endc'])
+    return s if is_windows or not c else '%s%s%s' % (color_schemes[state['color_scheme']][c], s, color_schemes[state['color_scheme']]['endc'])
 
 commands = {
     'version': "version\tPrint cbcli version",
@@ -514,22 +514,22 @@ def do_search(qry):
     for f in state['filters'][state['selected_mode']['name']]:
         qry = qry.replace(f, state['filters'][state['selected_mode']['name']][f])
     qry_result = cb.select(state['selected_mode']['object'])
+    timeframe = parse_user_timeframe(state['options']['timeframe']['value'])
+    if state['selected_mode']['name'] == 'process' and hasattr(qry_result, 'min_last_update'):
+        qry_result = qry_result.min_last_update(timeframe)
     if qry:
         try:
             qry_result = qry_result.where(qry)
         except ValueError:
             print(color("Invalid query", 'red'))
             qry = ''
-    timeframe = parse_user_timeframe(state['options']['timeframe']['value'])
-    if state['selected_mode']['name'] == 'process' and hasattr(qry_result, 'min_last_update'):
-        qry_result.min_last_update(timeframe)
 
     if state['selected_mode'].get('group_field'):
         try:
-            qry_result.group_by(state['selected_mode'].get('group_field'))
+            qry_result = qry_result.group_by(state['selected_mode'].get('group_field', 'id'))
         except AttributeError:
             print("Warning: Unable to group by field %s" % state['selected_mode'].get('group_field'))
-    qry_result.sort(state['selected_mode']['sort_field'])
+    qry_result = qry_result.sort(state['selected_mode']['sort_field'])
     return qry, qry_result
 
 def get_fields(result, state, expand_tabs=False):
@@ -600,19 +600,22 @@ def get_fields(result, state, expand_tabs=False):
     except ServerError as e:
         print(color("Carbon Black server returned an error. Check the server error logs for more information", "red"))
 
-def save_results(filename, result, state, canary):
-        total_results = len(result)
-        with open(filename, 'w') as out:
-            if state['options']['show_column_headers']:
-                out.write('\t'.join(state['fieldsets'][state['selected_mode']['name']]['current']) + '\n')
-            for index, total_searched, fieldlist in get_fields(result, state):
-                if canary['stop']:
-                    state['status_text'] = '[EXPORT STOPPED]'
+running_exports = []
+class result_exporter(Thread):
+    def run(self):
+        total_results = len(self.result)
+        with open(self.filename[0], 'w') as out:
+            if self.state['options']['show_column_headers']:
+                out.write('\t'.join(self.state['fieldsets'][self.state['selected_mode']['name']]['current']) + '\n')
+            for index, total_searched, fieldlist in get_fields(self.result, self.state):
+                if self.canary['stop']:
+                    self.state['status_text'] = '[EXPORT STOPPED]'
                     return
-                state['status_text'] = 'Saving to %s (%d%%)' % (filename, int(float(total_searched) / total_results * 100))
+                self.state['status_text'] = 'Saving to %s (%d%%)' % (self.filename[0], int(float(total_searched) / total_results * 100))
                 line = '\t'.join(fieldlist) + '\n'
                 out.write(encode(line))
-            state['status_text'] = '[COMPLETE]'
+            self.state['status_text'] = '[COMPLETE]'
+        running_exports.remove(self)
 
 def save_fieldsets(fieldsets):
     with open('.cbcli/fieldsets.json', 'w') as f:
@@ -696,37 +699,40 @@ def parse_opt(t, s):
         return int(s)
     return s
 
-def no_format(s, do_color=True):
+def no_format(process, s, do_color=True):
     return s
 
-def format_netconn(nc, do_color=False):
-    return u"%s %15s:%-5s %s %15s:%-5s (%s)" % (nc.timestamp, nc.local_ip, nc.local_port, '->' if nc.direction == 'Outbound' else '<-', nc.remote_ip, nc.remote_port, nc.domain)
+def format_netconn(process, nc, do_color=False, event_id=''):
+    return color(str(event_id) + " " if event_id else '', "blue" if do_color else None) + u"%s %15s:%-5s %s %15s:%-5s (%s)" % (nc.timestamp, nc.local_ip, nc.local_port, '->' if nc.direction == 'Outbound' else '<-', nc.remote_ip, nc.remote_port, nc.domain)
 
-def format_regmod(regmod, do_color=False):
+def format_regmod(process, regmod, do_color=False, event_id=''):
     line_color = ''
     if do_color:
         line_color = {'DeletedValue':'red', 'DeletedKey':'red', 'FirstWrote':'endc', 'CreatedKey':'green'}.get(regmod.type, '')
-    return color("%s %13s  %s", line_color) % (regmod.timestamp, regmod.type, regmod.path)
+    return color(str(event_id) + " " if event_id else '', "blue") + color("%s %13s  %s", line_color) % (regmod.timestamp, regmod.type, regmod.path)
 
-def format_filemod(filemod, do_color=False):
+def format_filemod(process, filemod, do_color=False, event_id=''):
     line_color = ''
     if do_color and state['options']['colorise_output']['value']:
-        line_color = {'Deleted':'red', 'FirstWrote':'endc', 'CreatedFile':'green', 'LastWrote':'endc'}.get(filemod.type, '')
-    return color("%s %-11s %s", line_color) % (filemod.timestamp, filemod.type, filemod.path)
+        line_color = {'deleted':'red', 'firstwrote':'endc', 'createdfile':'green', 'lastwrote':'endc'}.get(filemod.type, '')
+    return color(str(event_id) + " " if event_id else '', "blue") + color("%s %-11s %s", line_color) % (filemod.timestamp, filemod.type, filemod.path)
 
-def format_modload(modload, do_color=False):
-    return u"%s  %s  %s" % (modload.timestamp, modload.md5, modload.path)
+def format_filemod_export(process, filemod, do_color=False, event_id=''):
+    return '\t'.join((str(event_id), str(filemod.timestamp), process.hostname or "Unknown", process.username or "Unknown", process.process_name or "Unknown", filemod.type or "Unknown", filemod.path or "Unknown"))
 
-def format_crossproc(crossproc, do_color=False):
+def format_modload(process, modload, do_color=False, event_id=''):
+    return color(str(event_id) + " " if event_id else '', "blue") + u"%s  %s  %s" % (modload.timestamp, modload.md5, modload.path)
+
+def format_crossproc(process, crossproc, do_color=False, event_id=''):
     line_color = ''
     if color and state['options']['colorise_output']['value']:
         line_color = {'ProcessOpen':'green', 'ThreadOpen':'green', 'RemoteThread':'red'}.get(crossproc.type, '')
-    return color("%s %-12s %s %s", line_color) % (crossproc.timestamp, crossproc.type, crossproc.target_md5, crossproc.target_path)
+    return color(str(event_id) + " " if event_id else '', "blue") + color("%s %-12s %s %s", line_color) % (crossproc.timestamp, crossproc.type, crossproc.target_md5, crossproc.target_path)
 
-def format_children(child, do_color=False):
+def format_children(process, child, do_color=False):
     return child.path
 
-def format_parent(parent, do_color=False):
+def format_parent(process, parent, do_color=False):
     return parent.path
 
 def prefs_updated(state):
@@ -771,11 +777,11 @@ def save_extra_data(params, state, data_type, formatter):
         return "Invalid id"
 
 def get_extra_data(records, data_type, formatter=no_format, do_color=False):
-    for data_list in (getattr(i, data_type, []) for i in records):
+    for event_id, data_list in enumerate((getattr(i, 'all_' + data_type)() if getattr(i, 'all_' + data_type) else getattr(i, data_type, []) for i in records)):
         for d in data_list:
             if not d:
                 continue
-            yield formatter(d, do_color=color)
+            yield formatter(records[event_id], d, do_color=do_color, event_id=event_id+1 if len(records) > 1 else None)
 
 def print_walking_results(proc, depth):
     print("[%d] %s%s" % (depth, "  "*depth, '\t'.join([str(getattr(proc, i, '')) for i in state['fieldsets'][state['selected_mode']['name']]['current']])))
@@ -836,7 +842,7 @@ class cbcli_cmd:
     @staticmethod
     def _show(cmd, params, state):
         if not state['result']:
-           return "You haven't made a query yet."
+           return "No results"
         state['result_pager'] = result_pager(state['result'], state)
         try:
             index, progress = next(state['result_pager'])
@@ -860,8 +866,13 @@ class cbcli_cmd:
             return "Please specify output filename"
         state['canary']['stop'] = False
         filename = ' '.join(params)
-        t = Thread(target=save_results, args=(filename, state['result'], state, state['canary']))
-        t.daemon = True
+        t = result_exporter()
+        t.filename = filename,
+        t.result = state['result']
+        t.state = state
+        t.canary = state['canary']
+        t.daemon=True
+        running_exports.append(t)
         t.start()
     @staticmethod
     def _stop(cmd, params, state):
@@ -890,6 +901,7 @@ class cbcli_cmd:
         if not params:
             return "Please specify a fieldset to load"
         state['fieldsets'][state['selected_mode']['name']]['current'] = state['fieldsets'][state['selected_mode']['name']].get(params[0]) or state['fieldsets'][state['selected_mode']['name']]['current']
+        save_fieldsets(state['fieldsets'])
     @staticmethod
     def _fieldset_remove(cmd, params, state):
         if params[0] not in state['fieldsets'][state['selected_mode']['name']] or not params:
@@ -1080,7 +1092,7 @@ class cbcli_cmd:
         return print_extra_data(params, state, 'filemods', format_filemod)
     @staticmethod
     def _filemods_save(cmd, params, state):
-        return save_extra_data(params, state, 'filemods', format_filemod)
+        return save_extra_data(params, state, 'filemods', format_filemod_export)
     @staticmethod
     def _children(cmd, params, state):
         try:
@@ -1089,6 +1101,8 @@ class cbcli_cmd:
                  proc.walk_children(print_walking_results)
         except (ValueError, IndexError):
             return "Invalid id"
+        except KeyboardInterrupt:
+            return "Caught ctrl+c. Use 'exit' or ctrl+d to quit"
     @staticmethod
     def _parents(cmd, params, state):
         try:
@@ -1097,6 +1111,8 @@ class cbcli_cmd:
                  proc.walk_parents(print_walking_results)
         except (ValueError, IndexError):
             return "Invalid id"
+        except KeyboardInterrupt:
+            return "Caught ctrl+c. Use 'exit' or ctrl+d to quit"
     @staticmethod
     def _children_save(cmd, params, state):
         if not params:
@@ -1107,6 +1123,8 @@ class cbcli_cmd:
                     f.write(mod + '\n')
         except (ValueError, IndexError):
             return "Invalid id"
+        except KeyboardInterrupt:
+            return "Caught ctrl+c. Use 'exit' or ctrl+d to quit"
     @staticmethod
     def _parents_save(cmd, params, state):
         if not params:
@@ -1120,6 +1138,8 @@ class cbcli_cmd:
                         f.write(mod + '\n')
         except (ValueError, IndexError):
             return "Invalid id"
+        except KeyboardInterrupt:
+            return "Caught ctrl+c. Use 'exit' or ctrl+d to quit"
     @staticmethod
     def _query_save(cmd, params, state):
         if not state['qry_list']:
@@ -1205,7 +1225,7 @@ while state['running']:
                 auto_suggest=suggester,
                 bottom_toolbar=get_toolbar,
                 style=toolbar_style,
-                refresh_interval=0.5,
+                refresh_interval=0.5 if running_exports else None,
                 ).strip()
     except EOFError:
         state['canary']['stop'] = True
@@ -1227,5 +1247,6 @@ while state['running']:
         out = getattr(cbcli_cmd, '_' + cmd.replace('-', '_'), cbcli_cmd._invalid_cmd)(cmd=cmd, params=params, state=state)
     except ApiError:
         print(color("Query timed out", 'red'))
+        continue
     if out:
         print(color(out, 'red'))
