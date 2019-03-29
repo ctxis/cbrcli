@@ -1,7 +1,7 @@
 #!/usr/bin/python
 from __future__ import (division, print_function, absolute_import, unicode_literals)
 
-VERSION = 'cbrcli version 1.7.4 (Plutonium Eggplant)'
+VERSION = 'cbrcli version 1.7.7 (Plutonium Eggplant)'
 print(VERSION)
 from six.moves import range
 import os
@@ -12,10 +12,13 @@ import re
 import webbrowser
 import struct
 import sre_constants
+import shutil
+import time
+import subprocess
 from hashlib import md5
 from datetime import datetime, timedelta
 from cbapi.response import CbResponseAPI, Process, Binary, Feed, Sensor
-from cbapi.auth import Credentials, CredentialStore
+from cbapi.live_response_api import LiveResponseError
 from cbapi.errors import ServerError, CredentialError, ApiError
 from threading import Thread
 from collections import deque
@@ -658,6 +661,7 @@ def result_pager(result, state):
     num_indent = len(str(num_results))
     lines = []
     width = get_terminal_width() + len(' ' * (num_indent))
+    index = 0
     try:
         for index, total_searched, fieldlist in get_fields(result, state, expand_tabs=True):
             align_cols = state['options']['align_columns']['value'] and len(state['fieldsets'][state['selected_mode']['name']]['current']) > 1
@@ -1165,19 +1169,122 @@ class cbcli_cmd:
     def _version(cmd, params, state):
         print(VERSION)
     @staticmethod
+    def _shell(cmd, params, state):
+        if not len(params):
+            return "No host specified"
+        hostname = params[0]
+        print(color("Connecting to %s" % hostname, 'green'))
+        shell = live_shell(hostname)
+        while True:
+            try:
+                from_user = prompt(u'cb@%s:%s # ' % (hostname, shell.path), history=shell_history)
+            except EOFError:
+                break
+            if not from_user:
+                continue
+            if from_user == 'exit':
+                break
+            parts = from_user.split(' ')
+            try:
+                output = getattr(shell, '_' + parts[0])(parts[0], parts[1:], state)
+            except AttributeError:
+                print(color('Unknown command: %s' % parts[0], 'red'))
+        shell.session.close()
+        print("Disconnected from %s" % hostname)
+        
+    @staticmethod
     def _debug(cmd, params, state):
         print(dir(state.get('records', [])[int(params[0]) - 1]))
+
+class live_shell:
+    def __init__(self, hostname):
+        sensor = cb.select(Sensor).where("hostname:%s" % hostname).first()
+        if sensor:
+            self.session = sensor.lr_session()
+            self.path = 'c:'
+            self.path_sep = re.compile('[\\/]')
+    
+    def list_dir(self, path):
+        d = self.get_absolute_path(' '.join(params))
+        try:
+            for row in self.session.list_directory(d):
+                print(row.get('filename'))
+        except LiveResponseError:
+            print ("%s: Path not found" % d)
+
+    def file_listing(self, file_detail):
+        last_write = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_detail.get('last_write_time', 0)))
+        created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_detail.get('create_time', 0)))
+        size = '<dir>' if 'DIRECTORY' in file_detail.get('attributes', []) else str(file_detail.get('size', -1))
+        filename = file_detail.get('filename', '')
+        return [created, last_write, size, filename]
+
+    def format_files(self, file_list):
+        if not file_list:
+            return []
+        padding = [0 for i in file_list]
+        for row in file_list:
+            for i, value in enumerate(row):
+                if len(value) > padding[i]:
+                    padding[i] = len(value)
+        for row in file_list:
+            for i, value in enumerate(row):
+                row[i] = row[i] + (' ' * (padding[i] - len(row[i])))
+        return file_list
+
+    def _ls(self, cmd, params, state):
+        path = self.absolute_path(self.path + '\\' + ' '.join(params))
+        try:
+            dir_listing = self.session.list_directory(path)
+            rows = []
+            for row in dir_listing:
+                rows.append(self.file_listing(row))
+            for row in self.format_files(rows):
+                print('   '.join(row))
+        except LiveResponseError:
+            print(color('%s: Path not found' % path, 'red'))
+    _dir = _ls
+
+    def stat(self, path):
+        path = path.strip('\\')
+        try:
+            info = self.session.list_directory(path)
+        except LiveResponseError:
+            return None
+        return 'DIRECTORY' in info[0].get('attributes', [])
+
+    def fix_path(self, path):
+        path = path.replace('\\', os.path.sep)
+        path = os.path.normpath(path)
+        return path.replace(os.path.sep, '\\')
+
+    def absolute_path(self, path):
+        if ':' in path:
+            return path
+        full_path = '\\'.join((self.path, path.replace('/', '\\').strip('\\')))
+        drive = full_path[0]
+        full_path = self.fix_path(full_path)
+        return full_path if len(full_path) > 1 else drive + ':'
+
+    def _cd(self, cmd, params, state):
+        path = self.absolute_path(' '.join(params))
+        if self.stat(path):
+            self.path = path
+        else:
+            print(color('%s: Path not found' % path, 'red'))
+
+    def _cat(self, cmd, params, state):
+        path = self.absolute_path(' '.join(params))
+        try:
+            shutil.copyfileobj(self.session.get_raw_file(path), sys.stdout)
+        except LiveResponseError:
+            print(color('%s: Path not found' % path, 'red'))
 
 state['running'] = True
 
 profile = "default"
 if len(sys.argv) > 1:
     profile = sys.argv[1]
-
-# Fix to honour ignore_proxy config option
-credentials = Credentials(CredentialStore('response').get_credentials(profile))
-if credentials.get('ignore_system_proxy'):
-    os.environ['NO_PROXY'] = credentials.get('url').split('//')[1].split('/')[0]
 
 try:
     print("Connecting to server using profile '%s'" % profile)
@@ -1206,6 +1313,7 @@ state['feeds'] = [f for f in cb.select(Feed) if f.enabled]
 clear()
 
 history = FileHistory('.history')
+shell_history = FileHistory('.shell_history')
 session = PromptSession(
         history=history,
         auto_suggest=QuerySuggester()
