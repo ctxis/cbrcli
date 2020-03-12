@@ -1,7 +1,7 @@
 #!/usr/bin/python
 from __future__ import (division, print_function, absolute_import, unicode_literals)
 
-VERSION = 'cbrcli version 1.7.7 (Plutonium Eggplant)'
+VERSION = 'cbrcli version 1.7.8 (Plutonium Eggplant)'
 print(VERSION)
 from six.moves import range
 import os
@@ -204,7 +204,6 @@ opt_file = 'options.json'
 state = {}
 state['status_text'] = '[READY]'
 state['display_filters'] = []
-state['history_limit'] = 1000
 
 default_opts = {
         'ignore_duplicates': {'type':'bool', 'value':False, 'description':'When set to True only unique rows within a fieldset will be shown'},
@@ -215,7 +214,7 @@ default_opts = {
         'regex_ignore_case': {'type':'bool', 'value':False, 'description':'Regexes are case sensitive'},
         'show_column_headers': {'type':'bool', 'value':True, 'description':'Show column headers when printing records'},
         'colorise_output': {'type':'bool', 'value':True, 'description':'Show colors in terminal (Will not work on windows unless using powershell)'},
-        'align_columns': {'type':'bool', 'value':False, 'description':'Align columns in output'},
+        'align_columns': {'type':'bool', 'value':True, 'description':'Align columns in output'},
         'timestamp_format': {'type':'string', 'value':'%Y-%m-%d %H:%M:%S', 'description':'Format for timestamp fields (Python datetime format string)'},
 }
 
@@ -590,8 +589,6 @@ def get_fields(result, state, expand_tabs=False):
                     fieldlist.append(str(attr))
                 else:
                     fieldlist.append(u(attr).replace('\n', ' '))
-            if len(state['records']) > state['history_limit']:
-                state['records'][len(state['records']) - state['history_limit']] = None
             if ignore_duplicates:
                 h = md5(str(fieldlist).encode('utf-8')).digest()
                 if h in history:
@@ -781,7 +778,7 @@ def save_extra_data(params, state, data_type, formatter):
         return "Invalid id"
 
 def get_extra_data(records, data_type, formatter=no_format, do_color=False):
-    for event_id, data_list in enumerate((getattr(i, 'all_' + data_type)() if getattr(i, 'all_' + data_type) else getattr(i, data_type, []) for i in records)):
+    for event_id, data_list in enumerate((getattr(i, 'all_' + data_type)() if getattr(i, 'all_' + data_type, None) else getattr(i, data_type, []) for i in records)):
         for d in data_list:
             if not d:
                 continue
@@ -809,10 +806,10 @@ class cbcli_cmd:
     @staticmethod
     def _search(cmd, params, state):
         qry = ' '.join(from_user.split(' ')[1:])
-        if cmd in ('s', 'search'):
-            state['qry_list'] = []
+        #if cmd in ('s', 'search'):
+        #    state['qry_list'] = []
         state['records'] = []
-        if state['qry_list']:
+        if state['qry_list'] and not cmd in ('s', 'search'):
             qry = state['qry_list'][-1] + ' AND ' + qry
         state['qry_list'].append(qry)
         qry, state['result'] = do_search(qry)
@@ -833,13 +830,14 @@ class cbcli_cmd:
         if state['qry_list']:
             qry = state['qry_list'][-1]
         cbcli_cmd._filter(cmd, params, state)
-        
     @staticmethod
     def _back(cmd, params, state):
         state['qry_list'] = state['qry_list'][:-1]
         qry = ''
         if state['qry_list']:
             qry = state['qry_list'][-1]
+        else:
+            return "No history"
         qry, state['result'] = do_search(qry)
         result_count = len(state['result'])
         status.update_query(0, 0, qry=qry, total_results=result_count)
@@ -1225,6 +1223,8 @@ class live_shell:
         padding = [0 for i in file_list]
         for row in file_list:
             for i, value in enumerate(row):
+                if len(padding) < i+1:
+                    padding.append(0)
                 if len(value) > padding[i]:
                     padding[i] = len(value)
         for row in file_list:
@@ -1276,7 +1276,7 @@ class live_shell:
     def _cat(self, cmd, params, state):
         path = self.absolute_path(' '.join(params))
         try:
-            shutil.copyfileobj(self.session.get_raw_file(path), sys.stdout)
+            shutil.copyfileobj(str(self.session.get_raw_file(path)), sys.stdout)
         except LiveResponseError:
             print(color('%s: Path not found' % path, 'red'))
 
@@ -1312,7 +1312,7 @@ state['feeds'] = [f for f in cb.select(Feed) if f.enabled]
 
 clear()
 
-history = FileHistory('.history')
+history = FileHistory('.' + profile + '-history')
 shell_history = FileHistory('.shell_history')
 session = PromptSession(
         history=history,
