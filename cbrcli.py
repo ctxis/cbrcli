@@ -36,6 +36,16 @@ except ImportError:
     print("Please upgrade your version of prompt_toolkit (pip install --upgrade prompt-toolkit)")
     sys.exit(1)
 
+# Asyncio bug workaround
+# https://github.com/prompt-toolkit/python-prompt-toolkit/issues/1023
+import asyncio
+import selectors
+
+selector = selectors.SelectSelector()
+loop = asyncio.SelectorEventLoop(selector)
+asyncio.set_event_loop(loop)
+# End workaround
+
 PYTHON_VERSION = sys.version_info[0]
 
 modes = {
